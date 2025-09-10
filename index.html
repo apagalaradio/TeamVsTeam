@@ -1,11 +1,200 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8" />
+  <title>TeamVsTeam</title>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .win-row { background-color: #d0f0c0; }
+    table { border-collapse: collapse; margin-top: 20px; width: 100%; max-width: 1000px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background-color: #f0f0f0; cursor: pointer; }
+    th:hover { background-color: #e0e0e0; }
+    #filters { margin-top: 10px; }
+  </style>
 </head>
 <body>
-    <h1>Team vs Team</h1>
+  <h1>Team Vs Team</h1>
+  <div>
+    <label for="teamName">Team Name:</label>
+    <input type="text" id="teamName" placeholder="Enter team name" />
+    <button onclick="handleSearch()">Search</button>
+  </div>
+  <div id="filters" style="display:none;">
+    <label for="rivalFilter">Filter by Rival Team:</label>
+    <select id="rivalFilter" onchange="applyFilters()">
+      <option value="all">All</option>
+    </select>
+  </div>
+  <br />
+  <div id="status"></div>
+  <div id="results"></div>
+
+  <script>
+    let globalData = [];
+    let filteredData = [];
+    let currentTeam = "";
+    let sortOrder = {};
+    let rivalsSet = new Set();
+
+    async function handleSearch() {
+      const team = document.getElementById("teamName").value.trim();
+      if (!team) {
+        alert("Please enter a team name.");
+        return;
+      }
+      currentTeam = team;
+      document.getElementById("status").textContent = "Loading records...";
+      await fetchData(team);
+      populateRivalFilter();
+      applyFilters();
+      document.getElementById("filters").style.display = "block";
+    }
+
+    async function fetchData(team) {
+      const limit = 500;
+      let offset = 0;
+      let allData = [];
+
+      const where = `(Team1 LIKE '%${encodeURIComponent(team)}%' OR Team2 LIKE '%${encodeURIComponent(team)}%')`;
+
+      while (true) {
+        const url = `https://lol.fandom.com/api.php?action=cargoquery&tables=ScoreboardGames&fields=Tournament,GameId,Team1,Team1Players,Team1Picks,Team2,Team2Players,Team2Picks,WinTeam,LossTeam,DateTime_UTC&where=${where}&limit=${limit}&offset=${offset}&format=json&origin=*`;
+
+        try {
+          const response = await fetch(url);
+          const data = await response.json();
+          if (!data.cargoquery || data.cargoquery.length === 0) break;
+
+          const batch = data.cargoquery.map(item => item.title);
+          allData = allData.concat(batch);
+          document.getElementById("status").textContent = `Records fetched: ${allData.length}`;
+
+          if (batch.length < limit) break;
+          offset += limit;
+        } catch (error) {
+          console.error("Error fetching data:", error);
+          break;
+        }
+      }
+
+      globalData = allData;
+    }
+
+    function populateRivalFilter() {
+      const rivalFilter = document.getElementById("rivalFilter");
+      rivalFilter.innerHTML = '<option value="all">All</option>';
+      rivalsSet.clear();
+
+      globalData.forEach(game => {
+        const rivalTeam = game.Team1.toLowerCase() === currentTeam.toLowerCase()
+          ? game.Team2
+          : game.Team1;
+        rivalsSet.add(rivalTeam);
+      });
+
+      Array.from(rivalsSet).sort().forEach(team => {
+        const option = document.createElement("option");
+        option.value = team;
+        option.textContent = team;
+        rivalFilter.appendChild(option);
+      });
+    }
+
+    function applyFilters() {
+      const selectedRival = document.getElementById("rivalFilter").value;
+
+      filteredData = globalData.filter(game => {
+        const isTeam1 = game.Team1.toLowerCase() === currentTeam.toLowerCase();
+        const rival = isTeam1 ? game.Team2 : game.Team1;
+        return selectedRival === "all" || rival === selectedRival;
+      });
+
+      displayData(filteredData);
+    }
+
+    function displayData(data) {
+      const resultDiv = document.getElementById("results");
+      resultDiv.innerHTML = "";
+
+      if (data.length === 0) {
+        resultDiv.innerHTML = "<p>No results found.</p>";
+        return;
+      }
+
+      const table = document.createElement("table");
+      // Cambiamos OverviewPage por GameId como tercera columna
+      const headers = ["No.", "DateTime UTC", "GameId", "Tournament", "Team1", "Team2", "WinTeam", "LossTeam", "Team1Players", "Team2Players", "Team1Picks", "Team2Picks"];
+      const thead = table.createTHead();
+      const row = thead.insertRow();
+
+      headers.forEach((header, i) => {
+        const th = document.createElement("th");
+        th.textContent = header;
+        th.onclick = () => sortTableByColumn(i);
+        row.appendChild(th);
+      });
+
+      const tbody = table.createTBody();
+      data.forEach((item, index) => {
+        const row = tbody.insertRow();
+
+        if (item.WinTeam && item.WinTeam.toLowerCase().includes(currentTeam.toLowerCase())) {
+          row.classList.add("win-row");
+        }
+
+        const rowData = [
+          index + 1,
+          item["DateTime UTC"] || item.DateTime_UTC || "N/A",
+          item.GameId || "N/A",
+          item.Tournament,
+          item.Team1,
+          item.Team2,
+          item.WinTeam,
+          item.LossTeam,
+          item.Team1Players,
+          item.Team2Players,
+          item.Team1Picks,
+          item.Team2Picks
+        ];
+
+        rowData.forEach(cell => {
+          const td = row.insertCell();
+          td.textContent = cell || "N/A";
+        });
+      });
+
+      resultDiv.appendChild(table);
+    }
+
+    function sortTableByColumn(index) {
+      const headers = ["No.", "DateTime UTC", "GameId", "Tournament", "Team1", "Team2", "WinTeam", "LossTeam", "Team1Players", "Team2Players", "Team1Picks", "Team2Picks"];
+      const key = headers[index];
+      const isAsc = !sortOrder[key];
+      sortOrder = { [key]: isAsc };
+
+      const sorted = [...filteredData].sort((a, b) => {
+        const valA = getSortValue(a, key);
+        const valB = getSortValue(b, key);
+
+        if (key === "DateTime UTC") {
+          return isAsc ? new Date(valA) - new Date(valB) : new Date(valB) - new Date(valA);
+        }
+
+        return isAsc
+          ? valA.toString().localeCompare(valB.toString())
+          : valB.toString().localeCompare(valA.toString());
+      });
+
+      displayData(sorted);
+    }
+
+    function getSortValue(item, key) {
+      if (key === "No.") return filteredData.indexOf(item) + 1;
+      if (key === "DateTime UTC") return item["DateTime UTC"] || item.DateTime_UTC || "";
+      if (key === "GameId") return item.GameId || "";
+      return item[key] || "";
+    }
+  </script>
 </body>
 </html>
